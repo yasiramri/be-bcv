@@ -1,0 +1,180 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    container_name: ecommerce-postgres
+    environment:
+      POSTGRES_DB: ecommerce_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - ecommerce-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: ecommerce-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ecommerce-network
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: ecommerce-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: password
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - ecommerce-network
+
+  # Product Service
+  product-service:
+    build:
+      context: .
+      dockerfile: cmd/product-service/Dockerfile
+    container_name: product-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=ecommerce_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RABBITMQ_URL=amqp://admin:password@rabbitmq:5672/
+    ports:
+      - "8001:8001"
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    networks:
+      - ecommerce-network
+
+  # User Service
+  user-service:
+    build:
+      context: .
+      dockerfile: cmd/user-service/Dockerfile
+    container_name: user-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=ecommerce_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RABBITMQ_URL=amqp://admin:password@rabbitmq:5672/
+      - JWT_SECRET=your-secret-key
+    ports:
+      - "8002:8002"
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    networks:
+      - ecommerce-network
+
+  # Order Service
+  order-service:
+    build:
+      context: .
+      dockerfile: cmd/order-service/Dockerfile
+    container_name: order-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=ecommerce_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RABBITMQ_URL=amqp://admin:password@rabbitmq:5672/
+      - PRODUCT_SERVICE_URL=http://product-service:8001
+      - USER_SERVICE_URL=http://user-service:8002
+      - PAYMENT_SERVICE_URL=http://payment-service:8004
+    ports:
+      - "8003:8003"
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+      - product-service
+      - user-service
+    networks:
+      - ecommerce-network
+
+  # Payment Service
+  payment-service:
+    build:
+      context: .
+      dockerfile: cmd/payment-service/Dockerfile
+    container_name: payment-service
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=password
+      - DB_NAME=ecommerce_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - RABBITMQ_URL=amqp://admin:password@rabbitmq:5672/
+      - MIDTRANS_SERVER_KEY=your-midtrans-server-key
+      - MIDTRANS_CLIENT_KEY=your-midtrans-client-key
+      - MIDTRANS_ENVIRONMENT=sandbox
+    ports:
+      - "8004:8004"
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    networks:
+      - ecommerce-network
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: cmd/api-gateway/Dockerfile
+    container_name: api-gateway
+    environment:
+      - PRODUCT_SERVICE_URL=http://product-service:8001
+      - USER_SERVICE_URL=http://user-service:8002
+      - ORDER_SERVICE_URL=http://order-service:8003
+      - PAYMENT_SERVICE_URL=http://payment-service:8004
+      - JWT_SECRET=your-secret-key
+    ports:
+      - "8000:8000"
+    depends_on:
+      - product-service
+      - user-service
+      - order-service
+      - payment-service
+    networks:
+      - ecommerce-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+
+networks:
+  ecommerce-network:
+    driver: bridge
